@@ -1,0 +1,716 @@
+
+# "Happy families are all alike; every unhappy family is unhappy in its own way." (Tolstoy)
+
+#---------------------------------------------------------#
+# IDENTIFY: Working Directory (Place in Parantheses)
+
+d <- "//plfp/users/jcrawford/My Documents/Data Science/Webinars/test attendee reports"
+
+
+#---------------------------------------------------------#
+# LAUNCH .CSV IMPORT
+
+
+# Load Packages
+
+library( plyr )
+library( dplyr )
+library( tidyr )
+library( readr )
+library( scales )
+library( stringr )
+
+
+# Create Vector of File Names & List with Named Elements for Each File
+
+setwd( d )
+
+files <- Sys.glob("*.csv")
+list <- vector( "list" , length( files ) )
+names( list ) <- files
+
+rm( d )
+
+# Create "Master" Variable to Receive Appended Dataframes
+
+Master <- NULL
+
+#---------------------------------------------------------#
+# LAUNCH ENGINE
+
+for ( i in 1:length( files ) ){
+  
+report <- read_csv( files[i] )
+
+
+# Remove Rows with All NAs
+
+report <- filter( report , !is.na( `Attendee Report:` ) )
+
+
+# Assign Split Points by Row Number
+
+p <- c( 6 , 3 )
+
+
+# Split Dataframe at Rows "p"
+
+split_rep <- split( report , 
+                    cumsum( 1 : nrow( report ) %in% p ) )
+
+
+# Assign Split Sections to New Dataframes
+
+lapply(seq_along( split_rep ) , function( x ) {
+  assign( c( "Report Date" , 
+             "Summary" , 
+             "Attendees" )[ x ], 
+          split_rep[[ x ]] , 
+          envir = .GlobalEnv ) } )
+
+
+# Remove Obsolete Variables
+
+rm( report )
+rm( split_rep )
+rm( p )
+
+
+## CLEAN NEW DATASETS
+
+# Clean "Report Date" DF
+
+`Report Date` <- mutate( .data = `Report Date` , 
+                        `Report Date` = `Attendee Report:` ) %>%
+  select( `Report Date` ) %>%
+  filter( `Report Date` != "Report Generated:" )
+
+
+# Create "Title" DF
+
+Title <- mutate( Summary , `Title` = colnames( Summary )[2] ) %>%
+  select( Title ) %>%
+  unique()
+
+# Create "ID" DF
+
+ID <- mutate( Summary , 
+              `ID` = `Attendee Report:` ) %>%
+  select( ID ) %>%
+  filter( ID != "Webinar ID" ) %>%
+  filter( ID != "Attendee Details" )
+  
+# Create "Date" DF
+
+date.time <- mutate( Summary , 
+                     "web.date" = Summary[[2]] ) %>%
+  select( web.date ) %>%
+  filter( web.date != "Actual Start Date/Time" )
+
+date.time <- str_split_fixed( date.time , 
+                             pattern = " " , 
+                             n = Inf ) %>%
+  as.data.frame() # Split string into dataframe
+
+Date <- mutate( date.time ,
+                "Date" = V1 ) %>%
+  select( Date , Date )
+
+# Create "Time" DF
+
+Time <- mutate( date.time , 
+                "Time" = paste( V2 , 
+                            V3 , 
+                            separate = " " ) ) %>%
+  select( Time , Time ) %>%
+  as.data.frame()
+
+
+# Remove Obsolete Variable(s)
+
+rm( date.time )
+
+
+# Create "Duration" DF
+
+Summary <- mutate( Summary , Duration = X3 )
+
+
+Duration <- str_split_fixed( Summary$X3 , 
+                            pattern = " " , 
+                            n = Inf ) %>%
+  as.data.frame() %>%
+  filter( V1 != "Duration" ) %>%
+  filter( V1 != "" ) # Splits strings into separate values
+
+
+# Create "Minutes" DF (If, Then)
+
+if( ncol( Duration ) < 4 ){ 
+  
+Minutes <- mutate( Duration , "Minutes" = as.numeric( levels( Duration$V1))[Duration$V1])
+Minutes <- select( Minutes , Minutes) # If only minutes and minutes value, breaks down minutes
+
+} else{
+
+Minutes <- mutate( Duration , "Converted" = prod( as.numeric( Duration$V1[0] ) , 60 ) )
+Minutes <- mutate( Minutes , "Remainder" = as.numeric( levels( Minutes$V3))[Minutes$V3] )
+Minutes <- select( Minutes , Converted , Remainder )
+Minutes <- mutate( Minutes , "Minutes" = sum( Minutes$Converted , Minutes$Remainder ) )
+Minutes <- select( Minutes , Minutes ) # If minutes, hours, and values, combines total minutes
+
+}
+
+
+# Remove Obsolete Variables
+
+rm( Duration )
+
+
+# Clean "Summary" DF
+
+Summary <- filter( Summary , 
+                   `Attendee Report:` != "Attendee Details" ,
+                   `Attendee Report:` != "Webinar ID" ) %>%
+  mutate( "Registrants" = as.numeric( `X4` ) ,
+          "Attendees" = as.numeric( `X5` ) ) %>%
+  mutate( "Percent Attended" = percent( Attendees / Registrants ) ,
+          "Clicked Link" = as.numeric( `X6` ) ) %>%
+  mutate( "Percent Registered" = percent( Registrants / `Clicked Link` ) ) %>%
+  select( `Clicked Link` , 
+          Registrants ,
+          `Percent Registered` ,
+          Attendees , 
+          `Percent Attended` )
+
+
+#------------------------------------#
+# ATTENDEES
+
+# Eliminate 1st Row (True Colnames) & Mutate Variables
+
+attend.1 <- filter( Attendees , 
+                    `Attendee Report:` != "Attended" ) %>%
+  as.data.frame()
+
+attend.1 <- mutate( attend.1 ,
+                    "Attended" = `Attendee Report:` ,
+                    "Interest" = attend.1[,2] ,
+                    "Last Name" = X3 ,
+                    "First Name" = X4 ,
+                    "Email" = X5 ,
+                    "Registration Date/Time" = X6 ,
+                    "Join/Leave Time" = X7 ,
+                    "Time in Session" = X8 ,
+                    "Unsubscribed" = X9 ) %>%
+  select( Attended ,
+          Interest , 
+          `First Name` ,
+          `Last Name` ,
+          Email ,
+          `Registration Date/Time` ,
+          `Join/Leave Time` ,
+          `Time in Session` ,
+          Unsubscribed )
+
+
+# Coerce "Interest" to Numeric & Mutate "0 Interest" Levels to NAs
+
+attend.1$Interest <- as.character( attend.1$Interest )
+attend.1$Interest <- as.numeric( attend.1$Interest )
+
+attend.1$Interest[ attend.1$Interest == 0 ] <- NA
+
+
+# Attendee Registration Dates/Times
+
+reg.time <- select( attend.1 , `Registration Date/Time` )
+
+reg.time <- str_split( reg.time$`Registration Date/Time` ,
+                       pattern = " " ,
+                       n = Inf , 
+                       simplify = TRUE) %>%
+  as.data.frame() # Split string into dataframe
+
+
+# Create "Registration Date"
+
+`Registration Date` <- mutate( reg.time , 
+                               "Registration Date" = V1 ) %>%
+  select( `Registration Date` )
+
+
+# Create "Registration Time"
+
+`Registration Time` <- mutate( reg.time , 
+                               "Registration Time" = paste( V2 ,
+                                                            V3 ,
+                                                            separate = " " ) ) %>%
+  select( `Registration Time` ) %>%
+  as.data.frame()
+
+# Remove Obsolete Variables
+
+rm( reg.time )
+
+
+# Create "Time Entered" & "Time Left"
+
+enter.leave <- select( attend.1 , `Join/Leave Time` ) %>%
+  filter( `Join/Leave Time` != "--" )
+
+# Find difference in Attendees vs. Non-Attendees & Create NAs
+
+t <- select( attend.1 , `Join/Leave Time` ) %>%
+  nrow() %>%
+  as.numeric()
+
+r <- nrow( enter.leave ) %>%
+  as.numeric()
+
+d <- t - r %>%
+  as.numeric()
+
+missing <- matrix( , nrow = d , ncol = 1 ) %>%
+  as.data.frame() %>%
+  mutate( "Missing" = V1 ) %>%
+  select( Missing ) # Create DF of NAs
+
+# Remove Obsolete Variables
+
+rm( d , r , t )
+
+# Split "Enter Time" & "Leave Time" into DF
+
+enter.leave <- str_split( enter.leave$`Join/Leave Time` ,
+                       pattern = " " ,
+                       n = Inf , 
+                       simplify = TRUE) %>%
+  as.data.frame() # Split string into dataframe
+
+# Create "Enter Time"
+
+missing.et <- mutate( missing ,
+                      "Enter Time" = Missing ) %>%
+  select( `Enter Time` ) # Match Colnames with "Enter Time"
+
+`Enter Time` <- mutate( enter.leave , 
+                        "Enter Time" = paste( V2 ,
+                                              V3 ,
+                                              separate = " " ) ) %>%
+  select( `Enter Time` ) %>%
+  as.data.frame() %>%
+  rbind( missing.et )
+
+# Create "Leave Time"
+
+missing.lt <- mutate( missing ,
+                      "Leave Time" = Missing ) %>%
+  select( `Leave Time` ) # Match Colnames with "Enter Time"
+
+`Leave Time` <- mutate( enter.leave , 
+                        "Leave Time" = paste( V7 ,
+                                              V8 ,
+                                              separate = " " ) ) %>%
+  select( `Leave Time` ) %>%
+  as.data.frame() %>%
+  rbind( missing.lt )
+
+
+# Remove Obsolete Variables
+
+rm( missing.et ,
+    missing.lt ,
+    enter.leave )
+
+
+#---------------------------------#
+
+# Split "Time in Session"
+
+session.time <- select( attend.1 , `Time in Session` ) %>%
+  filter( `Time in Session` != "--" )
+
+session.time <- str_split( session.time$`Time in Session` ,
+                           pattern = " " ,
+                           n = Inf , 
+                           simplify = TRUE) %>%
+  as.data.frame()
+
+
+# DF of Missing Values to Stack
+
+missing.am <- mutate( missing ,
+                      "Attendee Minutes" = Missing ) %>%
+  select( `Attendee Minutes` ) %>%
+  as.data.frame() # Match Colnames with "Enter Time"
+
+
+# Create Unique IDs for Each Attendee Minutes/Hours
+
+st.id <- list( 1:nrow( session.time ) ) %>%
+  as.data.frame()
+
+st.id <- mutate( st.id ,
+                 "id" = st.id[ , 1] ) %>%
+  select( id )
+
+# Attach IDs as Key; Coerce to Class Numeric
+
+session.time <- cbind( st.id , session.time ) %>%
+  as.data.frame()
+
+session.time$V1 <- as.numeric( as.character( session.time$V1 ) )
+
+if ( "V3" %in% colnames( session.time) ){
+
+session.time$V3 <- as.numeric( as.character( session.time$V3 ) )
+
+}
+
+# Remove obsolete Variables
+
+rm( st.id )
+
+
+# Filter Values with Minute(s) vs. Minute(s)/Hour(s)
+
+st.m <- filter( session.time ,
+                grepl( "minute|minutes" , V2 )) %>%
+  mutate( "Attendee Minutes" = V1 ) %>%
+  select( id , `Attendee Minutes` )
+
+if ( "V3" %in% colnames( session.time) ){
+
+st.mh <- filter( session.time ,
+                 grepl( "hour|hours" , V2 )) %>%
+  mutate( "h" = V1 * 60 ) %>%
+  mutate( "m" = V3 ) %>%
+  mutate( "Attendee Minutes" = h + m ) %>%
+  select( id , `Attendee Minutes` )
+
+}
+
+# Combine & Order Filtered/Converted Minutes; Add Missing Values
+
+if ( "V3" %in% colnames( session.time) ){
+  session.time <- full_join( st.m , st.mh )
+} else {
+  session.time <- st.m
+}
+
+`Attendee Minutes` <- arrange( session.time , id ) %>%
+  select( `Attendee Minutes` )
+
+`Attendee Minutes` <- rbind( `Attendee Minutes` , missing.am )
+
+
+# Finalize "Attendee Summary"
+
+`Attendee Summary` <- select( attend.1 ,
+                              Attended ,
+                              Interest ,
+                              `First Name` ,
+                              `Last Name` ,
+                              Email ,
+                              Unsubscribed )
+
+
+# Remove Obsolete Variables
+
+rm( st.m ,
+    attend.1 ,
+    session.time ,
+    missing.am )
+
+if ( exists( "st.mh" ) ){
+  
+  rm( st.mh )
+  
+}
+
+
+# If/Then Statement for if Questions or Answers Exist?
+
+if( "X12" %in% colnames(Attendees) ){ # More than One Question & One Answer
+  
+  
+  # Create DF Totaling Client Respones
+  
+  q.a <- filter( Attendees , `Attendee Report:` != "Attended" ) %>%
+    select( -(`Attendee Report:`:X9) )
+  
+  q.a <- Filter( function( x )!all( is.na( x ) ), q.a ) # Remove columns with all NAs
+  
+  
+  # Find Total Column Count & Sequence for Odd Columns (Questions) & Even Columns (Answers)
+  
+  tot.cols <- as.numeric( ncol( q.a ) )
+  
+  q.cols <- seq( 1 , tot.cols , 2 )
+  a.cols <- seq( 2 , tot.cols , 2 )
+  
+  
+  # Create Columns Summing Questions & Answers
+  
+  q.a$Questions <- rowSums( x = !is.na( q.a[q.cols] ) )
+  q.a$Answers <- rowSums( x = !is.na( q.a[a.cols] ) )
+  
+  
+  # Rename & Clean Q&A Dataset
+  
+  `Q&A` <- select( q.a , Questions , Answers )
+  `Q&A` <- mutate( `Q&A` , 
+                   "Total Questions" = sum( `Q&A`$Questions ) ,
+                   "Total Answers" = sum( `Q&A`$Answers ) )
+  
+  
+  # Create Proportion of Total Questions per Attendee & Rearrange Columns
+  
+  `Q&A` <- mutate( `Q&A` , 
+                   "Questions (%)" = percent( Questions / `Total Questions` ) )
+  
+  `Q&A` <- select( `Q&A` , 
+                   Questions ,
+                   Answers ,
+                   `Questions (%)` ,
+                   `Total Questions` ,
+                   `Total Answers` )
+  
+  
+  # Remove Obsolete Variables
+  
+  rm( Attendees , 
+      missing , 
+      a.cols , 
+      q.cols , 
+      tot.cols ,
+      q.a )
+  
+} else if ( ncol(Attendees) == 11 ){ # Only One Question and/or One Answer
+  
+  # Create DF Totaling Client Respones
+  
+  q.a <- filter( Attendees , `Attendee Report:` != "Attended" ) %>%
+    select( -(`Attendee Report:`:X9) )
+  
+  
+  # Find Total Column Count & Sequence for Odd Columns (Questions) & Even Columns (Answers)
+  
+  tot.cols <- as.numeric( ncol( q.a ) )
+  
+  q.cols <- 1
+  a.cols <- 2
+  
+  
+  # Create Columns Summing Questions & Answers
+  
+  q.a$Questions <- rowSums( x = !is.na( q.a[q.cols] ) )
+  q.a$Answers <- rowSums( x = !is.na( q.a[a.cols] ) )
+  
+  
+  # Rename & Clean Q&A Dataset
+  
+  `Q&A` <- select( q.a , Questions , Answers )
+  `Q&A` <- mutate( `Q&A` , 
+                   "Total Questions" = sum( `Q&A`$Questions ) ,
+                   "Total Answers" = sum( `Q&A`$Answers ) )
+  
+  
+  # Create Proportion of Total Questions per Attendee & Rearrange Columns
+  
+  `Q&A` <- mutate( `Q&A` , 
+                   "Questions (%)" = percent( Questions / `Total Questions` ) )
+  
+  `Q&A` <- select( `Q&A` , 
+                   Questions ,
+                   Answers ,
+                   `Questions (%)` ,
+                   `Total Questions` ,
+                   `Total Answers` )
+  
+  
+  # Remove Obsolete Variables
+  
+  rm( Attendees , 
+      missing , 
+      a.cols , 
+      q.cols , 
+      tot.cols ,
+      q.a )
+
+} else {
+  
+  # Create Custome DF with Colnames & Class
+  
+  `Q&A` <- data.frame( 0 , 0 )
+  `Q&A` <- mutate( `Q&A` ,
+                   "Questions" = as.numeric( NA ) , 
+                   "Answers" = as.numeric( NA ) ,
+                   "Questions (%)" = as.character( NA ) ,
+                   "Total Questions" = as.numeric( NA ) ,
+                   "Total Answers" = as.numeric( NA ) ) %>%
+    select( `Questions` , 
+            `Answers` ,
+            `Questions (%)` ,
+            `Total Questions` ,
+            `Total Answers` )
+  
+  # Populate with NAs, n = Observations
+  
+  qa.na <- matrix( data = NA ,
+                   ncol = ncol( `Q&A` ) ,
+                   nrow = nrow( `Attendee Summary` ) - 1 ) %>%
+    as.data.frame()
+  
+  colnames( qa.na ) <- colnames( `Q&A` )
+  
+  `Q&A` <- rbind( `Q&A` , qa.na )
+  
+  # Remove Obsolete Variables
+  
+  rm( Attendees , 
+      missing , 
+      qa.na )
+  
+}
+
+
+#----------------------------------------------------------# MERGE ALL
+
+# Create "Tidy Summary" DF (Merge)
+
+`Tidy Summary` <- merge( ID , Title ) %>%
+  merge( Date ) %>%
+  merge( Time ) %>%
+  merge( Minutes ) %>%
+  merge( Summary )
+
+# Remove Obsolete Variables
+
+rm( ID ,
+    Title ,
+    Date ,
+    Time ,
+    Minutes ,
+    Summary )
+
+# Bind All DFs for "Tidy Attendees" 
+
+`Tidy Attendees` <- `Attendee Summary`
+`Tidy Attendees` <- cbind( `Tidy Attendees` , `Registration Date` )
+`Tidy Attendees` <- cbind( `Tidy Attendees` , `Registration Time` )
+`Tidy Attendees` <- cbind( `Tidy Attendees` , `Enter Time` )
+`Tidy Attendees` <- cbind( `Tidy Attendees` , `Leave Time` )
+`Tidy Attendees` <- cbind( `Tidy Attendees` , `Attendee Minutes` )
+`Tidy Attendees` <- cbind( `Tidy Attendees` , `Q&A` )
+
+
+# Remove Obsolete Variables
+
+rm( `Attendee Summary` ,
+    `Registration Date` ,
+    `Registration Time` ,
+    `Enter Time` ,
+    `Leave Time` ,
+    `Attendee Minutes` ,
+    `Q&A` )
+
+
+# Merge All DFs
+
+`Tidy Attendee Report` <- cbind( `Tidy Summary` , `Tidy Attendees` )
+
+
+# Remove Obsolete Variables
+
+rm( `Tidy Attendees` ,
+    `Tidy Summary` , 
+    `Report Date` )
+
+
+# Convert Times to 24-Hour Timestamp Format
+
+`Tidy Attendee Report`$Time <- format(strptime( `Tidy Attendee Report`$Time , 
+                                                               "%I:%M %p" ) , 
+                                                     format="%H:%M:%S" )
+
+`Tidy Attendee Report`$`Registration Time` <- format(strptime( `Tidy Attendee Report`$`Registration Time` , 
+                                                               "%I:%M %p" ) , 
+                                                     format="%H:%M:%S" )
+
+`Tidy Attendee Report`$`Enter Time` <- format(strptime( `Tidy Attendee Report`$`Enter Time` , 
+                                                               "%I:%M %p" ) , 
+                                                     format="%H:%M:%S" )
+
+`Tidy Attendee Report`$`Leave Time` <- format(strptime( `Tidy Attendee Report`$`Leave Time` , 
+                                                               "%I:%M %p" ) , 
+                                                     format="%H:%M:%S" )
+
+
+# Create Proportion of Attendee "Minutes (%)" Minutes
+
+`Tidy Attendee Report` <- `Tidy Attendee Report` %>%
+  mutate( "Minutes (%)" = percent( `Attendee Minutes` / Minutes ) )
+
+
+# Convert Q&A Values for "Attended = No" to NAs
+
+if ( "No" %in% `Tidy Attendee Report`$Attended ){
+
+temp.att <- sum( `Tidy Attendee Report`$Attended == "Yes" ) + 1
+temp.reg <- as.numeric( length( `Tidy Attendee Report`$Attended ) )
+
+`Tidy Attendee Report`$Questions[ temp.att : temp.reg ] <- NA
+`Tidy Attendee Report`$Answers[ temp.att : temp.reg ] <- NA
+`Tidy Attendee Report`$`Questions (%)`[ temp.att : temp.reg ] <- NA
+`Tidy Attendee Report`$`Total Questions`[ temp.att : temp.reg ] <- NA
+`Tidy Attendee Report`$`Total Answers`[ temp.att : temp.reg ] <- NA
+`Tidy Attendee Report`$`Minutes (%)`[ temp.att : temp.reg ] <- NA
+
+rm( temp.att ,
+    temp.reg )
+
+}
+
+
+# Reorder "Minutes (%)" Column to Follow "Attendee Minutes"
+
+`Tidy Attendee Report` <-
+  `Tidy Attendee Report`[ , c( 1:21 , 27 , 22:26 ) ]
+
+
+# Write .CSV File "Tidy..."
+
+
+#!!# new.name <- paste( "tidy_" , files[i] , sep = "" )
+
+#!!# write_csv( `Tidy Attendee Report` , new.name , append = FALSE )
+
+#!!# rm( new.name )
+
+
+# Store Into Master File
+
+Master <- rbind( Master , data.frame( `Tidy Attendee Report` ) )
+
+}
+
+# Write "Master" .CSV File
+
+#$$# write_csv( Master , "Master.csv" , append = FALSE )
+
+# Redefine Columns to Original Variable Names
+
+colnames( Master ) <- colnames( `Tidy Attendee Report` )
+
+# Remove Obsolete Variables
+
+rm( `Tidy Attendee Report` ,
+    files ,
+    i ,
+    list )
+
+# Clear RStudio Console
+
+cat( "\014" ) 
